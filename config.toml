@@ -1,0 +1,5 @@
+# filepath: c:\Users\OliverSwack\OneDrive - Bovitz, Inc\Desktop\proj01\.streamlit\config.toml
+[server]
+maxUploadSize = 4096
+headless = false
+port = 8501
