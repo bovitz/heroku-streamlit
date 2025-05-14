@@ -34,6 +34,23 @@ def process_data(df, qmaps):
     maps['QBRAND'] = maps['QBRAND1']
     maps['QC1'] = maps['QC1_1001']
     maps['QAGE_RANGE'] = {'1':'18-24', '2':'25-34', '3':'35-44', '4':'45-54', '5':'55-64', '6':'65+'}
+    quartermap = {
+    'January': 'Q1',
+    'February': 'Q1',
+    'March': 'Q1',
+    'April': 'Q2',
+    'May': 'Q2',
+    'June': 'Q2',
+    'July': 'Q3',
+    'August': 'Q3',
+    'September': 'Q3',
+    'October': 'Q4',
+    'November': 'Q4',
+    'December': 'Q4'
+    }
+    df['Quarter'] = df['QCALMONTH'].apply(lambda val: ct.getMap(maps, 'QCALMONTH')[str(int(val))])
+    df['Quarter'] = df['Quarter'].str.extract(r'(\w+)', expand=False)
+    df['Quarter'] = df['Quarter'].map(quartermap)
     return df, maps
 
 
@@ -86,9 +103,14 @@ else:
         question, code = parts[1], parts[2]
         filter_map[question].append(code)
 
+    #TODO: check year and quarter selections later
     # --- UI: Year Selection ---
-    years = sorted(df['QYEAR'].dropna().unique().astype(int))
+    years = sorted(df['QYEAR'].unique().astype(int))
     year_selected = st.sidebar.multiselect("Select Year(s)", years, default=years)
+
+    # --- UI: Quarter Selection ---
+    quarters = sorted(df['Quarter'].unique())
+    quarter_selected = st.sidebar.multiselect("Select Quarter(s)", quarters, default=quarters)
 
     # --- UI: Box and Ranking ---
     box_option = st.sidebar.selectbox("Box Option", ['Top 2 Box', 'Bottom 2 Box', 'None'], index=2)
@@ -114,6 +136,10 @@ else:
         if len(brand_codes) > 0:
             df = df[df['QBRAND'].isin(brand_codes)]
         df = ct.select_years(df, year_selected)
+        '''
+        TODO: check line below to make sure it works as intended
+        '''
+        df = df[df['Quarter'].isin(quarter_selected)]
 
         crosstab = ct.generate_crosstab(df[q_option], df['QBRAND'], maps, percentages=True)
 
@@ -148,15 +174,43 @@ else:
 
         # --- Time Series ---
         if time_series_brand_analysis:
-            which_brand = st.selectbox("Select Brand for Time Series", brands_selected)
-            brand_code = brand_keys[brand_values.index(which_brand)]
-            df_brand = df[df['QBRAND'] == brand_code]
-            df_brand = ct.sort_over_time(df_brand)
-            tseries = ct.generate_crosstab(df_brand['QC1'], df_brand['QCALMONTH'], maps)
-            tseries = tseries.drop(columns=tseries.columns[-1])
-            st.subheader("Time Series - Total Answering")
-            fig2, ax2 = plt.subplots(figsize=(10, 4))
-            tseries.loc['Total Answering'].plot(kind='bar', ax=ax2, title="Responses Over Time")
-            plt.xticks(rotation=45, fontsize=8)
-            plt.tight_layout()
-            st.pyplot(fig2)
+            # --- rendering, loading in UI ---
+            which_brand = st.multiselect("Select Brand(s) for Time Series", brands_selected)
+            brand_codes = [brand_keys[brand_values.index(b)] for b in which_brand]
+            sub_categories = list(ct.getMap(maps, q_option).values())
+            sub_select = st.sidebar.multiselect("Subquestion Select", sub_categories)
+
+            # --- processing selections, generating plot ---
+            df_brands = df[df['QBRAND'].isin(brand_codes)].copy()
+            df_brands = df_brands.reset_index(drop=True)
+
+            if len(sub_select) == 0:
+                st.warning("Please select at least one subquestion.")
+            else:
+                fig2, ax2 = plt.subplots(figsize=(10, 4))
+                for code in brand_codes:
+                    df_brand = df_brands[df_brands['QBRAND'] == code].copy()
+                    for sub_selected in sub_select:
+                        #TODO: go over this method, probanly a better way to initially save the key code...
+                        sub_map = ct.getMap(maps, q_option)  # {key: value}
+                        sub_selected_key = [k for k, v in sub_map.items() if v == sub_selected][0]
+                        if isinstance(df_brand[q_option].iloc[0], list):
+                            # st.write('key:', sub_selected_key)
+                            mask = df_brand[q_option].apply(lambda x: int(sub_selected_key) in x)
+                            df_sub = df_brand[mask].copy()
+                        else:
+                            df_sub = df_brand[df_brand[q_option] == sub_selected_key].copy()
+                        # st.write(df_brand.head())
+                        df_sub = ct.sort_over_time(df_sub)
+
+                        #TODO: change the periods to be quarters and year instead of qcalmonth
+                        tseries = ct.generate_crosstab(df_sub[q_option], df_brand['QCALMONTH'], maps)
+                        tseries = tseries.drop(columns=tseries.columns[-1])
+                        tseries.loc['Total Answering'].plot(kind='line', ax=ax2, label=f"{sub_selected} ({brand_values[brand_keys.index(code)]})")
+
+                st.subheader(f"Time Series - {', '.join(sub_select)}")
+                ax2.set_title("Selected Subquestions Over Time")
+                ax2.legend()
+                plt.xticks(rotation=45, fontsize=8)
+                plt.tight_layout()
+                st.pyplot(fig2)
